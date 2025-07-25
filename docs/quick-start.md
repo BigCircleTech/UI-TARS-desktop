@@ -10,6 +10,8 @@ The previous version of UI-TARS Desktop version 0.0.8 will be upgraded to a new 
 
 Please install **Chrome** ([stable](https://www.google.com/chrome/)/[beta](https://www.google.com/chrome/beta/)/[dev](https://www.google.com/chrome/dev/)/[canary](https://www.google.com/chrome/canary/)), **Edge** ([stable](https://www.microsoft.com/en-us/edge/download)/[beta/dev/canary](https://www.microsoft.com/en-us/edge/download/insider)), or **Firefox** ([stable](https://www.mozilla.org/en-US/firefox/new/)/[beta/dev/nightly](https://www.mozilla.org/zh-CN/firefox/channel/desktop/)) for **Browser Operator**.
 
+UI-TARS-desktop is currently only available for single monitor setup. Multi-monitor configuration may cause failure for some tasks.
+
 <br />
 
 ## Download
@@ -47,7 +49,37 @@ You can download the [latest release](https://github.com/bytedance/UI-TARS-deskt
 
 <br />
 
-## Get model and run
+
+## Run remote operator
+
+> [!TIP]
+> This feature is currently available **only in Mainland China**. It is not supported in other regions at this time. We appreciate your understanding and support.
+
+
+By downloading UI-TARS Desktop App version 0.2.0 or above, you can use **remote computer and browser operation features** directly within the application.
+
+On the home page, you’ll find the “Use Remote Computer” and “Use Remote Browser” buttons—click either one to start your experience.
+
+
+<img src="https://github.com/user-attachments/assets/d4728228-9bb4-4011-b8f2-13884e791c7f" width="400px" style="margin-left: 4em;" />
+
+<br />
+
+Simply enter the GUI tasks you want to accomplish in the chat panel on the left, and the AI model will operate the remote device for you. Each session gives you **30 minutes of free remote access**, and after the session ends, you can immediately start a new 30-minute free instance—explore and enjoy without limits.
+
+<img src="https://github.com/user-attachments/assets/d3297d67-84f4-4e15-ade6-a3c4d056ffd9" width="400px" style="margin-left: 4em;" />
+
+<br />
+
+> [!NOTE]
+> **Notice for Commercial Use**:<br />
+> Beyond the free trial, if you wish to deploy your own Remote Computer and Browser Agent, you can explore more on Volcano Engine's OS Agent Services via deployment links (in Chinese) [Computer Use Agent](https://console.volcengine.com/vefaas/region:vefaas+cn-beijing/application/create?templateId=680b0a890e881f000862d9f0&channel=github&source=ui-tars) and [Browser Use Agent](https://console.volcengine.com/vefaas/region:vefaas+cn-beijing/application/create?templateId=67f7b4678af5a6000850556c&channel=github&source=ui-tars).
+
+
+<br />
+
+
+## Get model and run local operator
 
 ### UI-TARS-1.5 on [Hugging Face](https://endpoints.huggingface.co/catalog)
 
@@ -70,12 +102,16 @@ VLM Model Name: xxx
 ```
 
 > [!NOTE]
-> For VLM Provider, make sure to select "**Hugging Face for UI-TARS-1.5**" to ensure proper VLM Action parsing.
+> 1. For VLM Provider, make sure to select "**Hugging Face for UI-TARS-1.5**" to ensure proper VLM Action parsing.
+> 2. For VLM Base URL & VLM Model Name, you can checkout your huggingface endpoint page to see detail information. Please make sure Base URL ends with '/v1/'
+>
+> <img src="../apps/ui-tars/images/quick_start/base_url.png" width="500px" />
 
-  <img src="../apps/ui-tars/images/quick_start/huggingface_setting.png" width="500px" />
+<img src="../apps/ui-tars/images/quick_start/huggingface_setting.png" width="500px" />
 
-5. Select the desired usage scenario before starting a new chat
-  <img src="../apps/ui-tars/images/quick_start/settings_scene.png" width="500px" />
+5. Click button starting a new chat
+
+  <img src="../apps/ui-tars/images/quick_start/start_button.png" width="500px" />
 
 6. Input the command to start a round of GUI operation tasks!
 
@@ -122,7 +158,8 @@ VLM Model Name: doubao-1.5-ui-tars-250328
 
 
 7. Select the desired usage scenario before starting a new chat
-  <img src="../apps/ui-tars/images/quick_start/settings_scene.png" width="500px" />
+
+  <img src="../apps/ui-tars/images/quick_start/start_button.png" width="500px" />
 
 > [!NOTE]
 > Before using `Browser Operator` mode, please ensure that Chrome, Edge, or Firefox is installed on your device.
@@ -132,6 +169,28 @@ VLM Model Name: doubao-1.5-ui-tars-250328
   <img src="../apps/ui-tars/images/quick_start/start_task.png" width="500px" />
 
 <br>
+
+
+## Try out our free remote operators
+
+1. Open the app and agree to our User Agreement
+
+<img src="../apps/ui-tars/images/quick_start/user_agreement.png" width="500px" />
+
+> [!NOTE]
+> We promise all records on the servers will be exclusively used for academic research purposes and will not be utilized for any other activities.
+
+2. Use for free for 30 minutes
+
+<img src="../apps/ui-tars/images/quick_start/free_for_30min.png" width="500px" />
+
+3. Easily take control of a remote device
+
+<img src="../apps/ui-tars/images/quick_start/take_control.png" width="500px" />
+
+4. How to exit/close
+
+<img src="../apps/ui-tars/images/quick_start/terminate.png" width="500px" />
 
 ## More
 
