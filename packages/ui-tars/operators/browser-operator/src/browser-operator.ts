@@ -6,11 +6,12 @@
 import { LocalBrowser } from '@agent-infra/browser';
 import { ConsoleLogger, Logger, defaultLogger } from '@agent-infra/logger';
 import { Operator, parseBoxToScreenCoords } from '@ui-tars/sdk/core';
-import type {
+import {
   Page,
   KeyInput,
   BrowserType,
   BrowserInterface,
+  RemoteBrowser,
 } from '@agent-infra/browser';
 import type {
   ScreenshotOutput,
@@ -41,6 +42,8 @@ export class BrowserOperator extends Operator {
 
   private showActionInfo = true;
 
+  private showWaterFlowEffect = true;
+
   private deviceScaleFactor?: number;
 
   /**
@@ -64,6 +67,10 @@ export class BrowserOperator extends Operator {
 
     if (options.showActionInfo === false) {
       this.showActionInfo = false;
+    }
+
+    if (options.showWaterFlow === false) {
+      this.showWaterFlowEffect = false;
     }
   }
 
@@ -91,13 +98,24 @@ export class BrowserOperator extends Operator {
   }
 
   /**
+   * Sets whether to show the water flow effect during screenshots
+   * @param enable Whether to enable the water flow effect
+   */
+  public setShowWaterFlow(enable: boolean): void {
+    this.showWaterFlowEffect = enable;
+    this.logger.info(`Water flow effect ${enable ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
    * Takes a screenshot of the current browser viewport
    * @returns Promise resolving to screenshot data
    */
   public async screenshot(): Promise<ScreenshotOutput> {
     this.logger.info('Starting screenshot...');
 
-    this.uiHelper.showWaterFlow();
+    if (this.showWaterFlowEffect) {
+      this.uiHelper.showWaterFlow();
+    }
 
     const page = await this.getActivePage();
 
@@ -200,8 +218,23 @@ export class BrowserOperator extends Operator {
       await this.getActivePage();
 
       switch (action_type) {
+        case 'drag':
+          await this.handleDrag(
+            action_inputs,
+            deviceScaleFactor,
+            screenWidth,
+            screenHeight,
+          );
+          break;
+
         case 'navigate':
-          await this.handleNavigate(action_inputs);
+          if (!action_inputs.content) {
+            throw new Error('No target url specified for navigation');
+          }
+          await this.handleNavigate({ url: action_inputs.content });
+          break;
+        case 'navigate_back':
+          await this.handleNavigateBack();
           break;
 
         case 'click':
@@ -229,6 +262,14 @@ export class BrowserOperator extends Operator {
 
         case 'hotkey':
           await this.handleHotkey(action_inputs);
+          break;
+
+        case 'press':
+          await this.handlePress(action_inputs);
+          break;
+
+        case 'release':
+          await this.handleRelease(action_inputs);
           break;
 
         case 'scroll':
@@ -265,13 +306,16 @@ export class BrowserOperator extends Operator {
       await this.cleanup();
       throw error;
     }
+
+    return {
+      // Hand it over to the upper layer to avoid redundancy
+      // @ts-expect-error fix type later
+      startX,
+      startY,
+      action_inputs,
+    };
   }
 
-  /**
-   * Handles a click action at the specified coordinates
-   * @param x X coordinate
-   * @param y Y coordinate
-   */
   private async handleClick(x: number, y: number) {
     this.logger.info(`Clicking at (${x}, ${y})`);
     const page = await this.getActivePage();
@@ -405,6 +449,84 @@ export class BrowserOperator extends Operator {
     this.logger.info('Hotkey execution completed');
   }
 
+  private async handlePress(inputs: Record<string, any>) {
+    const page = await this.getActivePage();
+
+    const keyStr = inputs?.key;
+    if (!keyStr) {
+      this.logger.warn('No key specified for press');
+      throw new Error(`No key specified for press`);
+    }
+
+    this.logger.info(`Pressing key: ${keyStr}`);
+
+    const keys = keyStr.split(/[\s+]/);
+    const normalizedKeys: KeyInput[] = keys.map((key: string) => {
+      const lowercaseKey = key.toLowerCase();
+      const keyInput = KEY_MAPPINGS[lowercaseKey];
+
+      if (keyInput) {
+        return keyInput;
+      }
+
+      throw new Error(`Unsupported key: ${key}`);
+    });
+
+    this.logger.info(`Normalized keys for press:`, normalizedKeys);
+
+    // Only press the keys
+    for (const key of normalizedKeys) {
+      await page.keyboard.down(key);
+      await this.delay(50); // 添加小延迟确保按键稳定
+    }
+
+    this.logger.info('Press operation completed');
+  }
+
+  private async handleRelease(inputs: Record<string, any>) {
+    const page = await this.getActivePage();
+
+    const keyStr = inputs?.key;
+    if (!keyStr) {
+      this.logger.warn('No key specified for release');
+      throw new Error(`No key specified for release`);
+    }
+
+    this.logger.info(`Releasing key: ${keyStr}`);
+
+    const keys = keyStr.split(/[\s+]/);
+    const normalizedKeys: KeyInput[] = keys.map((key: string) => {
+      const lowercaseKey = key.toLowerCase();
+      const keyInput = KEY_MAPPINGS[lowercaseKey];
+
+      if (keyInput) {
+        return keyInput;
+      }
+
+      throw new Error(`Unsupported key: ${key}`);
+    });
+
+    this.logger.info(`Normalized keys for release:`, normalizedKeys);
+
+    // Release the keys
+    for (const key of normalizedKeys) {
+      await page.keyboard.up(key);
+      await this.delay(50); // 添加小延迟确保按键稳定
+    }
+
+    // For hotkey combinations that may trigger navigation,
+    // wait for navigation to complete
+    const navigationKeys = ['Enter', 'F5'];
+    if (normalizedKeys.some((key: string) => navigationKeys.includes(key))) {
+      this.logger.info('Waiting for possible navigation after key release');
+      await this.waitForPossibleNavigation(page);
+    } else {
+      await this.delay(500);
+    }
+
+    this.logger.info('Release operation completed');
+  }
+
   private async handleScroll(inputs: Record<string, any>) {
     const page = await this.getActivePage();
 
@@ -433,12 +555,96 @@ export class BrowserOperator extends Operator {
 
   private async handleNavigate(inputs: Record<string, any>): Promise<void> {
     const page = await this.getActivePage();
-    const { url } = inputs;
+    let { url } = inputs;
+    // If the url does not start with http:// or If the url does not start with http:// or URL_ADDRESS automatically add https://
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+
     this.logger.info(`Navigating to: ${url}`);
     await page.goto(url, {
-      waitUntil: 'networkidle0',
+      waitUntil: [], // Wait for no event
     });
     this.logger.info('Navigation completed');
+  }
+
+  private async handleDrag(
+    inputs: Record<string, any>,
+    deviceScaleFactor: number,
+    screenWidth: number,
+    screenHeight: number,
+  ) {
+    const page = await this.getActivePage();
+
+    // Get start and end points from inputs
+    const startBoxStr = inputs.start_box || '';
+    const endBoxStr = inputs.end_box || '';
+
+    if (!startBoxStr || !endBoxStr) {
+      throw new Error('Missing start_point or end_point for drag operation');
+    }
+
+    // Parse coordinates
+    const startCoords = parseBoxToScreenCoords({
+      boxStr: startBoxStr,
+      screenWidth,
+      screenHeight,
+    });
+    const endCoords = parseBoxToScreenCoords({
+      boxStr: endBoxStr,
+      screenWidth,
+      screenHeight,
+    });
+
+    // Adjust for device scale factor
+    const startX = startCoords.x ? startCoords.x / deviceScaleFactor : null;
+    const startY = startCoords.y ? startCoords.y / deviceScaleFactor : null;
+    const endX = endCoords.x ? endCoords.x / deviceScaleFactor : null;
+    const endY = endCoords.y ? endCoords.y / deviceScaleFactor : null;
+
+    if (!startX || !startY || !endX || !endY) {
+      throw new Error('Invalid coordinates for drag operation');
+    }
+
+    this.logger.info(
+      `Dragging from (${startX}, ${startY}) to (${endX}, ${endY})`,
+    );
+
+    try {
+      // Show drag indicators
+      await this.uiHelper?.showDragIndicator(startX, startY, endX, endY);
+      await this.delay(300);
+
+      // Perform the drag operation
+      await page.mouse.move(startX, startY);
+      await this.delay(100);
+      await page.mouse.down();
+
+      // Perform the drag movement in steps for a more natural drag
+      const steps = 10;
+      for (let i = 1; i <= steps; i++) {
+        const stepX = startX + ((endX - startX) * i) / steps;
+        const stepY = startY + ((endY - startY) * i) / steps;
+        await page.mouse.move(stepX, stepY);
+        await this.delay(30); // Short delay between steps
+      }
+
+      await this.delay(100);
+      await page.mouse.up();
+
+      await this.delay(800);
+      this.logger.info('Drag completed');
+    } catch (error) {
+      this.logger.error('Drag operation failed:', error);
+      throw error;
+    }
+  }
+
+  private async handleNavigateBack(): Promise<void> {
+    const page = await this.getActivePage();
+    this.logger.info(`handleNavigateBack`);
+    await page.goBack();
+    this.logger.info('handleNavigateBack completed');
   }
 
   /**
@@ -541,28 +747,38 @@ export class DefaultBrowserOperator extends BrowserOperator {
   public static async getInstance(
     highlight = false,
     showActionInfo = false,
+    showWaterFlow = false,
     isCallUser = false,
     searchEngine = 'google' as SearchEngine,
   ): Promise<DefaultBrowserOperator> {
+    if (!this.logger) {
+      this.logger = new ConsoleLogger('[DefaultBrowserOperator]');
+    }
+
+    if (this.browser) {
+      const isAlive = await this.browser.isBrowserAlive();
+      if (!isAlive) {
+        this.browser = null;
+        this.instance = null;
+      }
+    }
+
+    if (!this.browser) {
+      this.browser = new LocalBrowser({ logger: this.logger });
+      await this.browser.launch({
+        executablePath: this.browserPath,
+        browserType: this.browserType,
+      });
+    }
+
     if (!this.instance) {
-      if (!this.logger) {
-        this.logger = new ConsoleLogger('[DefaultBrowserOperator]');
-      }
-
-      if (!this.browser) {
-        this.browser = new LocalBrowser({ logger: this.logger });
-        await this.browser.launch({
-          executablePath: this.browserPath,
-          browserType: this.browserType,
-        });
-      }
-
       this.instance = new DefaultBrowserOperator({
         browser: this.browser,
         browserType: this.browserType,
         logger: this.logger,
         highlightClickableElements: highlight,
         showActionInfo: showActionInfo,
+        showWaterFlow: showWaterFlow,
       });
     }
 
@@ -578,6 +794,60 @@ export class DefaultBrowserOperator extends BrowserOperator {
         waitUntil: 'networkidle2',
       });
     }
+
+    this.instance.setHighlightClickableElements(highlight);
+
+    return this.instance;
+  }
+
+  public static async destroyInstance(): Promise<void> {
+    if (this.instance) {
+      await this.instance.cleanup();
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
+      }
+      this.instance = null;
+    }
+  }
+}
+
+export class RemoteBrowserOperator extends BrowserOperator {
+  private static instance: RemoteBrowserOperator | null = null;
+  private static browser: RemoteBrowser | null = null;
+  private static browserType: BrowserType;
+  private static logger: Logger | null = null;
+
+  private constructor(options: BrowserOperatorOptions) {
+    super(options);
+  }
+
+  public static async getInstance(
+    wsEndpoint: string,
+    highlight = false,
+    showActionInfo = false,
+    showWaterFlow = false,
+    isCallUser = false,
+    // searchEngine = 'baidu' as SearchEngine,
+  ): Promise<DefaultBrowserOperator> {
+    if (!this.logger) {
+      this.logger = new ConsoleLogger('[RemoteBrowserOperator]');
+    }
+
+    this.browser = new RemoteBrowser({
+      wsEndpoint: wsEndpoint,
+      logger: this.logger,
+    });
+    await this.browser.launch();
+
+    this.instance = new RemoteBrowserOperator({
+      browser: this.browser,
+      browserType: this.browserType,
+      logger: this.logger,
+      highlightClickableElements: highlight,
+      showActionInfo: showActionInfo,
+      showWaterFlow: showWaterFlow,
+    });
 
     this.instance.setHighlightClickableElements(highlight);
 

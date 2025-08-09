@@ -10,14 +10,16 @@ import {
   ShareVersion,
   ErrorStatusEnum,
   GUIAgentError,
+  Message,
 } from '@ui-tars/shared/types';
 import { IMAGE_PLACEHOLDER, MAX_LOOP_COUNT } from '@ui-tars/shared/constants';
 import { sleep } from '@ui-tars/shared/utils';
 import asyncRetry from 'async-retry';
 import { Jimp } from 'jimp';
+import { v4 as uuidv4 } from 'uuid';
 
 import { setContext } from './context/useContext';
-import { Operator, GUIAgentConfig } from './types';
+import { Operator, GUIAgentConfig, InvokeParams } from './types';
 import { UITarsModel } from './Model';
 import { BaseGUIAgent } from './base';
 import {
@@ -61,7 +63,11 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
   }
 
-  async run(instruction: string) {
+  async run(
+    instruction: string,
+    historyMessages?: Message[],
+    remoteModelHdrs?: Record<string, string>,
+  ) {
     const { operator, model, logger } = this;
     const {
       signal,
@@ -108,10 +114,16 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
 
     let loopCnt = 0;
     let snapshotErrCnt = 0;
+    let totalTokens = 0;
+    let totalTime = 0;
+    let previousResponseId: string | undefined;
 
     // start running agent
     data.status = StatusEnum.RUNNING;
     await onData?.({ data: { ...data, conversations: [] } });
+
+    // Generate session id with UUID
+    const sessionId = this.generateSessionId();
 
     try {
       // eslint-disable-next-line no-constant-condition
@@ -172,6 +184,7 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
 
         const snapshot = await asyncRetry(() => operator.screenshot(), {
           retries: retry?.screenshot?.maxRetries ?? 0,
+          minTimeout: 5000,
           onRetry: retry?.screenshot?.onRetry,
         });
 
@@ -226,21 +239,32 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
 
         // conversations -> messages, images
         const modelFormat = toVlmModelFormat({
+          historyMessages: historyMessages || [],
           conversations: data.conversations,
           systemPrompt: data.systemPrompt,
         });
         // sliding images window to vlm model
-        const vlmParams = {
+        const vlmParams: InvokeParams = {
           ...processVlmParams(modelFormat.conversations, modelFormat.images),
           screenContext: {
             width,
             height,
           },
-          mime,
           scaleFactor: snapshot.scaleFactor,
           uiTarsVersion: this.uiTarsVersion,
+          headers: {
+            ...remoteModelHdrs,
+            'X-Session-Id': sessionId,
+          },
+          previousResponseId,
         };
-        const { prediction, parsedPredictions } = await asyncRetry(
+        const {
+          prediction,
+          parsedPredictions,
+          costTime,
+          costTokens,
+          responseId,
+        } = await asyncRetry(
           async (bail) => {
             try {
               const result = await model.invoke(vlmParams);
@@ -265,19 +289,27 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
                   error as Error,
                 ),
               });
-
-              return {
-                prediction: '',
-                parsedPredictions: [],
-              };
+              throw error;
             }
           },
           {
             retries: retry?.model?.maxRetries ?? 0,
+            minTimeout: 1000 * 30,
             onRetry: retry?.model?.onRetry,
           },
         );
 
+        // responseId shouldn't be assigned to null or undefined
+        if (responseId) {
+          previousResponseId = responseId;
+        }
+
+        totalTokens += costTokens || 0;
+        totalTime += costTime || 0;
+
+        logger.info(
+          `[GUIAgent] consumes: >>> costTime: ${costTime}, costTokens: ${costTokens} <<<`,
+        );
         logger.info('[GUIAgent] Response:', prediction);
         logger.info(
           '[GUIAgent] Parsed Predictions:',
@@ -360,6 +392,7 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
                 }),
               {
                 retries: retry?.execute?.maxRetries ?? 0,
+                minTimeout: 5000,
                 onRetry: retry?.execute?.onRetry,
               },
             ).catch((e) => {
@@ -421,6 +454,8 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
     } finally {
       logger.info('[GUIAgent] Finally: status', data.status);
 
+      this.model?.reset();
+
       if (data.status === StatusEnum.USER_STOPPED) {
         await operator.execute({
           prediction: '',
@@ -450,6 +485,10 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
             ),
         });
       }
+
+      logger.info(
+        `[GUIAgent] >>> totalTokens: ${totalTokens}, totalTime: ${totalTime}, loopCnt: ${loopCnt} <<<`,
+      );
     }
   }
 
@@ -558,5 +597,9 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
     }
 
     return parseError;
+  }
+
+  private generateSessionId(): string {
+    return uuidv4();
   }
 }
